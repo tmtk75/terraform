@@ -126,6 +126,27 @@ func resourceAwsElasticacheCreate(d *schema.ResourceData, meta interface{}) erro
 		return fmt.Errorf("Error creating Elasticache: %s", err)
 	}
 
+	// AWS CLI complains like below if we try to delete while creating.
+	//     Can only delete cache clusters with state in:
+	//     available, failed, incompatible-parameters, incompatible-network, restore-failed
+	// So we cannot delete clusters in `creating` state.
+	// We need to wait for states which we can delete.
+	pending := []string{"creating"}
+	stateConf := &resource.StateChangeConf{
+		Pending:    pending,
+		Target:     "available",
+		Refresh:    CacheClusterStateRefreshFunc(elasticacheconn, d.Id(), "available", pending),
+		Timeout:    10 * time.Minute,
+		Delay:      10 * time.Second,
+		MinTimeout: 3 * time.Second,
+	}
+
+	log.Printf("[DEBUG] Waiting for state to become available: %v", d.Id())
+	_, sterr := stateConf.WaitForState()
+	if sterr != nil {
+		return fmt.Errorf("Error waiting for elasticache (%s) to be deletable: %s", d.Id(), sterr)
+	}
+
 	d.SetId(clusterId)
 
 	return nil
@@ -168,27 +189,6 @@ func resourceAwsElasticacheUpdate(d *schema.ResourceData, meta interface{}) erro
 func resourceAwsElasticacheDelete(d *schema.ResourceData, meta interface{}) error {
 	elasticacheconn := meta.(*AWSClient).elasticacheconn
 
-	// AWS CLI complains like below if we try to delete while creating.
-	//     Can only delete cache clusters with state in:
-	//     available, failed, incompatible-parameters, incompatible-network, restore-failed
-	// So we cannot delete clusters in `creating` state.
-	// We need to wait for states which we can delete.
-	pending := []string{"creating"}
-	stateConf := &resource.StateChangeConf{
-		Pending:    pending,
-		Target:     "available",
-		Refresh:    CacheClusterStateRefreshFunc(elasticacheconn, d.Id(), "available", pending),
-		Timeout:    10 * time.Minute,
-		Delay:      10 * time.Second,
-		MinTimeout: 3 * time.Second,
-	}
-
-	log.Printf("[DEBUG] Waiting for state to become available: %v", d.Id())
-	_, sterr := stateConf.WaitForState()
-	if sterr != nil {
-		return fmt.Errorf("Error waiting for elasticache (%s) to be deletable: %s", d.Id(), sterr)
-	}
-
 	req := &elasticcache.DeleteCacheClusterMessage{
 		CacheClusterID: aws.String(d.Id()),
 	}
@@ -198,7 +198,7 @@ func resourceAwsElasticacheDelete(d *schema.ResourceData, meta interface{}) erro
 	}
 
 	log.Printf("[DEBUG] Waiting for deletion: %v", d.Id())
-	stateConf = &resource.StateChangeConf{
+	stateConf := &resource.StateChangeConf{
 		Pending:    []string{"creating", "available", "deleting", "incompatible-parameters", "incompatible-network", "restore-failed"},
 		Target:     "",
 		Refresh:    CacheClusterStateRefreshFunc(elasticacheconn, d.Id(), "", []string{}),
@@ -207,7 +207,7 @@ func resourceAwsElasticacheDelete(d *schema.ResourceData, meta interface{}) erro
 		MinTimeout: 3 * time.Second,
 	}
 
-	_, sterr = stateConf.WaitForState()
+	_, sterr := stateConf.WaitForState()
 	if sterr != nil {
 		return fmt.Errorf("Error waiting for elasticache (%s) to delete: %s", d.Id(), sterr)
 	}
