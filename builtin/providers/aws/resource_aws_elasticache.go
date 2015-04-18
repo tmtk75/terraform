@@ -230,7 +230,7 @@ func CacheClusterStateRefreshFunc(conn *elasticcache.ElasticCache, clusterID, gi
 				return nil, "", nil
 			}
 
-			log.Printf("[ERROT] CacheClusterStateRefreshFunc: %s", err)
+			log.Printf("[ERROR] CacheClusterStateRefreshFunc: %s", err)
 			return nil, "", err
 		}
 
