@@ -16,7 +16,6 @@ func resourceAwsElasticache() *schema.Resource {
 	return &schema.Resource{
 		Create: resourceAwsElasticacheCreate,
 		Read:   resourceAwsElasticacheRead,
-		Update: resourceAwsElasticacheUpdate,
 		Delete: resourceAwsElasticacheDelete,
 
 		Schema: map[string]*schema.Schema{
@@ -179,10 +178,6 @@ func resourceAwsElasticacheRead(d *schema.ResourceData, meta interface{}) error 
 		d.Set("parameter_group_name", c.CacheParameterGroup)
 	}
 
-	return nil
-}
-
-func resourceAwsElasticacheUpdate(d *schema.ResourceData, meta interface{}) error {
 	return nil
 }
 
