@@ -1,6 +1,7 @@
 package aws
 
 import (
+	"github.com/hashicorp/terraform/helper/hashcode"
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/hashicorp/terraform/terraform"
 )
@@ -32,6 +33,15 @@ func Provider() terraform.ResourceProvider {
 				Description: descriptions["secret_key"],
 			},
 
+			"token": &schema.Schema{
+				Type:     schema.TypeString,
+				Optional: true,
+				DefaultFunc: schema.MultiEnvDefaultFunc([]string{
+					"AWS_SESSION_TOKEN",
+				}, ""),
+				Description: descriptions["token"],
+			},
+
 			"region": &schema.Schema{
 				Type:     schema.TypeString,
 				Required: true,
@@ -41,6 +51,26 @@ func Provider() terraform.ResourceProvider {
 				}, nil),
 				Description:  descriptions["region"],
 				InputDefault: "us-east-1",
+			},
+
+			"allowed_account_ids": &schema.Schema{
+				Type:          schema.TypeSet,
+				Elem:          &schema.Schema{Type: schema.TypeString},
+				Optional:      true,
+				ConflictsWith: []string{"forbidden_account_ids"},
+				Set: func(v interface{}) int {
+					return hashcode.String(v.(string))
+				},
+			},
+
+			"forbidden_account_ids": &schema.Schema{
+				Type:          schema.TypeSet,
+				Elem:          &schema.Schema{Type: schema.TypeString},
+				Optional:      true,
+				ConflictsWith: []string{"allowed_account_ids"},
+				Set: func(v interface{}) int {
+					return hashcode.String(v.(string))
+				},
 			},
 		},
 
@@ -90,6 +120,9 @@ func init() {
 
 		"secret_key": "The secret key for API operations. You can retrieve this\n" +
 			"from the 'Security & Credentials' section of the AWS console.",
+
+		"token": "session token. A session token is only required if you are\n" +
+			"using temporary security credentials.",
 	}
 }
 
@@ -97,7 +130,16 @@ func providerConfigure(d *schema.ResourceData) (interface{}, error) {
 	config := Config{
 		AccessKey: d.Get("access_key").(string),
 		SecretKey: d.Get("secret_key").(string),
+		Token:     d.Get("token").(string),
 		Region:    d.Get("region").(string),
+	}
+
+	if v, ok := d.GetOk("allowed_account_ids"); ok {
+		config.AllowedAccountIds = v.(*schema.Set).List()
+	}
+
+	if v, ok := d.GetOk("forbidden_account_ids"); ok {
+		config.ForbiddenAccountIds = v.(*schema.Set).List()
 	}
 
 	return config.Client()

@@ -1,15 +1,17 @@
 package aws
 
 import (
+	"fmt"
 	"log"
 	"strings"
 	"time"
 
+	"github.com/hashicorp/terraform/helper/hashcode"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/helper/schema"
 
-	"github.com/hashicorp/aws-sdk-go/aws"
-	"github.com/hashicorp/aws-sdk-go/gen/route53"
+	"github.com/awslabs/aws-sdk-go/aws"
+	"github.com/awslabs/aws-sdk-go/service/route53"
 )
 
 func resourceAwsRoute53Zone() *schema.Resource {
@@ -31,6 +33,15 @@ func resourceAwsRoute53Zone() *schema.Resource {
 				Computed: true,
 			},
 
+			"name_servers": &schema.Schema{
+				Type:     schema.TypeSet,
+				Elem:     &schema.Schema{Type: schema.TypeString},
+				Computed: true,
+				Set: func(v interface{}) int {
+					return hashcode.String(v.(string))
+				},
+			},
+
 			"tags": tagsSchema(),
 		},
 	}
@@ -40,7 +51,7 @@ func resourceAwsRoute53ZoneCreate(d *schema.ResourceData, meta interface{}) erro
 	r53 := meta.(*AWSClient).r53conn
 
 	comment := &route53.HostedZoneConfig{Comment: aws.String("Managed by Terraform")}
-	req := &route53.CreateHostedZoneRequest{
+	req := &route53.CreateHostedZoneInput{
 		Name:             aws.String(d.Get("name").(string)),
 		HostedZoneConfig: comment,
 		CallerReference:  aws.String(time.Now().Format(time.RFC3339Nano)),
@@ -65,7 +76,7 @@ func resourceAwsRoute53ZoneCreate(d *schema.ResourceData, meta interface{}) erro
 		Timeout:    10 * time.Minute,
 		MinTimeout: 2 * time.Second,
 		Refresh: func() (result interface{}, state string, err error) {
-			changeRequest := &route53.GetChangeRequest{
+			changeRequest := &route53.GetChangeInput{
 				ID: aws.String(cleanChangeID(*resp.ChangeInfo.ID)),
 			}
 			return resourceAwsGoRoute53Wait(r53, changeRequest)
@@ -80,7 +91,7 @@ func resourceAwsRoute53ZoneCreate(d *schema.ResourceData, meta interface{}) erro
 
 func resourceAwsRoute53ZoneRead(d *schema.ResourceData, meta interface{}) error {
 	r53 := meta.(*AWSClient).r53conn
-	_, err := r53.GetHostedZone(&route53.GetHostedZoneRequest{ID: aws.String(d.Id())})
+	zone, err := r53.GetHostedZone(&route53.GetHostedZoneInput{ID: aws.String(d.Id())})
 	if err != nil {
 		// Handle a deleted zone
 		if r53err, ok := err.(aws.APIError); ok && r53err.Code == "NoSuchHostedZone" {
@@ -90,8 +101,16 @@ func resourceAwsRoute53ZoneRead(d *schema.ResourceData, meta interface{}) error 
 		return err
 	}
 
+	ns := make([]string, len(zone.DelegationSet.NameServers))
+	for i := range zone.DelegationSet.NameServers {
+		ns[i] = *zone.DelegationSet.NameServers[i]
+	}
+	if err := d.Set("name_servers", ns); err != nil {
+		return fmt.Errorf("[DEBUG] Error setting name servers for: %s, error: %#v", d.Id(), err)
+	}
+
 	// get tags
-	req := &route53.ListTagsForResourceRequest{
+	req := &route53.ListTagsForResourceInput{
 		ResourceID:   aws.String(d.Id()),
 		ResourceType: aws.String("hostedzone"),
 	}
@@ -101,7 +120,7 @@ func resourceAwsRoute53ZoneRead(d *schema.ResourceData, meta interface{}) error 
 		return err
 	}
 
-	var tags []route53.Tag
+	var tags []*route53.Tag
 	if resp.ResourceTagSet != nil {
 		tags = resp.ResourceTagSet.Tags
 	}
@@ -130,7 +149,7 @@ func resourceAwsRoute53ZoneDelete(d *schema.ResourceData, meta interface{}) erro
 
 	log.Printf("[DEBUG] Deleting Route53 hosted zone: %s (ID: %s)",
 		d.Get("name").(string), d.Id())
-	_, err := r53.DeleteHostedZone(&route53.DeleteHostedZoneRequest{ID: aws.String(d.Id())})
+	_, err := r53.DeleteHostedZone(&route53.DeleteHostedZoneInput{ID: aws.String(d.Id())})
 	if err != nil {
 		return err
 	}
@@ -138,7 +157,7 @@ func resourceAwsRoute53ZoneDelete(d *schema.ResourceData, meta interface{}) erro
 	return nil
 }
 
-func resourceAwsGoRoute53Wait(r53 *route53.Route53, ref *route53.GetChangeRequest) (result interface{}, state string, err error) {
+func resourceAwsGoRoute53Wait(r53 *route53.Route53, ref *route53.GetChangeInput) (result interface{}, state string, err error) {
 
 	status, err := r53.GetChange(ref)
 	if err != nil {

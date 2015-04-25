@@ -8,8 +8,8 @@ import (
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
 
-	"github.com/hashicorp/aws-sdk-go/aws"
-	route53 "github.com/hashicorp/aws-sdk-go/gen/route53"
+	"github.com/awslabs/aws-sdk-go/aws"
+	"github.com/awslabs/aws-sdk-go/service/route53"
 )
 
 func TestCleanRecordName(t *testing.T) {
@@ -122,6 +122,23 @@ func TestAccRoute53Record_wildcard(t *testing.T) {
 	})
 }
 
+func TestAccRoute53Record_weighted(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testAccCheckRoute53RecordDestroy,
+		Steps: []resource.TestStep{
+			resource.TestStep{
+				Config: testAccRoute53WeightedCNAMERecord,
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckRoute53RecordExists("aws_route53_record.www-dev"),
+					testAccCheckRoute53RecordExists("aws_route53_record.www-live"),
+				),
+			},
+		},
+	})
+}
+
 func testAccCheckRoute53RecordDestroy(s *terraform.State) error {
 	conn := testAccProvider.Meta().(*AWSClient).r53conn
 	for _, rs := range s.RootModule().Resources {
@@ -134,7 +151,7 @@ func testAccCheckRoute53RecordDestroy(s *terraform.State) error {
 		name := parts[1]
 		rType := parts[2]
 
-		lopts := &route53.ListResourceRecordSetsRequest{
+		lopts := &route53.ListResourceRecordSetsInput{
 			HostedZoneID:    aws.String(cleanZoneID(zone)),
 			StartRecordName: aws.String(name),
 			StartRecordType: aws.String(rType),
@@ -174,7 +191,7 @@ func testAccCheckRoute53RecordExists(n string) resource.TestCheckFunc {
 
 		en := expandRecordName(name, "notexample.com")
 
-		lopts := &route53.ListResourceRecordSetsRequest{
+		lopts := &route53.ListResourceRecordSetsInput{
 			HostedZoneID:    aws.String(cleanZoneID(zone)),
 			StartRecordName: aws.String(en),
 			StartRecordType: aws.String(rType),
@@ -280,5 +297,31 @@ resource "aws_route53_record" "default" {
 	type = "TXT"
 	ttl = "30"
 	records = ["lalalala"]
+}
+`
+
+const testAccRoute53WeightedCNAMERecord = `
+resource "aws_route53_zone" "main" {
+	name = "notexample.com"
+}
+
+resource "aws_route53_record" "www-dev" {
+  zone_id = "${aws_route53_zone.main.zone_id}"
+  name = "www"
+  type = "CNAME"
+  ttl = "5"
+  weight = 10
+  set_identifier = "dev"
+  records = ["dev.notexample.com"]
+}
+
+resource "aws_route53_record" "www-live" {
+  zone_id = "${aws_route53_zone.main.zone_id}"
+  name = "www"
+  type = "CNAME"
+  ttl = "5"
+  weight = 90
+  set_identifier = "live"
+  records = ["dev.notexample.com"]
 }
 `

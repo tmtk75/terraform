@@ -5,8 +5,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/hashicorp/aws-sdk-go/aws"
-	"github.com/hashicorp/aws-sdk-go/gen/ec2"
+	"github.com/awslabs/aws-sdk-go/aws"
+	"github.com/awslabs/aws-sdk-go/service/ec2"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/hashicorp/terraform/terraform"
@@ -19,6 +19,10 @@ func TestAccAWSInstance_normal(t *testing.T) {
 	testCheck := func(*terraform.State) error {
 		if *v.Placement.AvailabilityZone != "us-west-2a" {
 			return fmt.Errorf("bad availability zone: %#v", *v.Placement.AvailabilityZone)
+		}
+
+		if *v.Placement.GroupName != "terraform-placement-group" {
+			return fmt.Errorf("bad placement group name: %#v", *v.Placement.GroupName)
 		}
 
 		if len(v.SecurityGroups) == 0 {
@@ -43,9 +47,9 @@ func TestAccAWSInstance_normal(t *testing.T) {
 				Check: func(*terraform.State) error {
 					conn := testAccProvider.Meta().(*AWSClient).ec2conn
 					var err error
-					vol, err = conn.CreateVolume(&ec2.CreateVolumeRequest{
+					vol, err = conn.CreateVolume(&ec2.CreateVolumeInput{
 						AvailabilityZone: aws.String("us-west-2a"),
-						Size:             aws.Integer(5),
+						Size:             aws.Long(int64(5)),
 					})
 					return err
 				},
@@ -89,7 +93,8 @@ func TestAccAWSInstance_normal(t *testing.T) {
 				Config: testAccInstanceConfig,
 				Check: func(*terraform.State) error {
 					conn := testAccProvider.Meta().(*AWSClient).ec2conn
-					return conn.DeleteVolume(&ec2.DeleteVolumeRequest{VolumeID: vol.VolumeID})
+					_, err := conn.DeleteVolume(&ec2.DeleteVolumeInput{VolumeID: vol.VolumeID})
+					return err
 				},
 			},
 		},
@@ -103,7 +108,7 @@ func TestAccAWSInstance_blockDevices(t *testing.T) {
 		return func(*terraform.State) error {
 
 			// Map out the block devices by name, which should be unique.
-			blockDevices := make(map[string]ec2.InstanceBlockDeviceMapping)
+			blockDevices := make(map[string]*ec2.InstanceBlockDeviceMapping)
 			for _, blockDevice := range v.BlockDeviceMappings {
 				blockDevices[*blockDevice.DeviceName] = blockDevice
 			}
@@ -236,6 +241,38 @@ func TestAccAWSInstance_vpc(t *testing.T) {
 	})
 }
 
+func TestAccAWSInstance_multipleRegions(t *testing.T) {
+	var v ec2.Instance
+
+	// record the initialized providers so that we can use them to
+	// check for the instances in each region
+	var providers []*schema.Provider
+	providerFactories := map[string]terraform.ResourceProviderFactory{
+		"aws": func() (terraform.ResourceProvider, error) {
+			p := Provider()
+			providers = append(providers, p.(*schema.Provider))
+			return p, nil
+		},
+	}
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:          func() { testAccPreCheck(t) },
+		ProviderFactories: providerFactories,
+		CheckDestroy:      testAccCheckInstanceDestroyWithProviders(&providers),
+		Steps: []resource.TestStep{
+			resource.TestStep{
+				Config: testAccInstanceConfigMultipleRegions,
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckInstanceExistsWithProviders(
+						"aws_instance.foo", &v, &providers),
+					testAccCheckInstanceExistsWithProviders(
+						"aws_instance.bar", &v, &providers),
+				),
+			},
+		},
+	})
+}
+
 func TestAccAWSInstance_NetworkInstanceSecurityGroups(t *testing.T) {
 	var v ec2.Instance
 
@@ -246,6 +283,25 @@ func TestAccAWSInstance_NetworkInstanceSecurityGroups(t *testing.T) {
 		Steps: []resource.TestStep{
 			resource.TestStep{
 				Config: testAccInstanceNetworkInstanceSecurityGroups,
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckInstanceExists(
+						"aws_instance.foo_instance", &v),
+				),
+			},
+		},
+	})
+}
+
+func TestAccAWSInstance_NetworkInstanceVPCSecurityGroupIDs(t *testing.T) {
+	var v ec2.Instance
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testAccCheckInstanceDestroy,
+		Steps: []resource.TestStep{
+			resource.TestStep{
+				Config: testAccInstanceNetworkInstanceVPCSecurityGroupIDs,
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckInstanceExists(
 						"aws_instance.foo_instance", &v),
@@ -267,9 +323,9 @@ func TestAccAWSInstance_tags(t *testing.T) {
 				Config: testAccCheckInstanceConfigTags,
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckInstanceExists("aws_instance.foo", &v),
-					testAccCheckTags(&v.Tags, "foo", "bar"),
+					testAccCheckTagsSDK(&v.Tags, "foo", "bar"),
 					// Guard against regression of https://github.com/hashicorp/terraform/issues/914
-					testAccCheckTags(&v.Tags, "#", ""),
+					testAccCheckTagsSDK(&v.Tags, "#", ""),
 				),
 			},
 
@@ -277,8 +333,8 @@ func TestAccAWSInstance_tags(t *testing.T) {
 				Config: testAccCheckInstanceConfigTagsUpdate,
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckInstanceExists("aws_instance.foo", &v),
-					testAccCheckTags(&v.Tags, "foo", ""),
-					testAccCheckTags(&v.Tags, "bar", "baz"),
+					testAccCheckTagsSDK(&v.Tags, "foo", ""),
+					testAccCheckTagsSDK(&v.Tags, "bar", "baz"),
 				),
 			},
 		},
@@ -344,7 +400,25 @@ func TestAccAWSInstance_associatePublicIPAndPrivateIP(t *testing.T) {
 }
 
 func testAccCheckInstanceDestroy(s *terraform.State) error {
-	conn := testAccProvider.Meta().(*AWSClient).ec2conn
+	return testAccCheckInstanceDestroyWithProvider(s, testAccProvider)
+}
+
+func testAccCheckInstanceDestroyWithProviders(providers *[]*schema.Provider) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		for _, provider := range *providers {
+			if provider.Meta() == nil {
+				continue
+			}
+			if err := testAccCheckInstanceDestroyWithProvider(s, provider); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
+func testAccCheckInstanceDestroyWithProvider(s *terraform.State, provider *schema.Provider) error {
+	conn := provider.Meta().(*AWSClient).ec2conn
 
 	for _, rs := range s.RootModule().Resources {
 		if rs.Type != "aws_instance" {
@@ -352,8 +426,8 @@ func testAccCheckInstanceDestroy(s *terraform.State) error {
 		}
 
 		// Try to find the resource
-		resp, err := conn.DescribeInstances(&ec2.DescribeInstancesRequest{
-			InstanceIDs: []string{rs.Primary.ID},
+		resp, err := conn.DescribeInstances(&ec2.DescribeInstancesInput{
+			InstanceIDs: []*string{aws.String(rs.Primary.ID)},
 		})
 		if err == nil {
 			if len(resp.Reservations) > 0 {
@@ -377,6 +451,11 @@ func testAccCheckInstanceDestroy(s *terraform.State) error {
 }
 
 func testAccCheckInstanceExists(n string, i *ec2.Instance) resource.TestCheckFunc {
+	providers := []*schema.Provider{testAccProvider}
+	return testAccCheckInstanceExistsWithProviders(n, i, &providers)
+}
+
+func testAccCheckInstanceExistsWithProviders(n string, i *ec2.Instance, providers *[]*schema.Provider) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs, ok := s.RootModule().Resources[n]
 		if !ok {
@@ -386,21 +465,25 @@ func testAccCheckInstanceExists(n string, i *ec2.Instance) resource.TestCheckFun
 		if rs.Primary.ID == "" {
 			return fmt.Errorf("No ID is set")
 		}
+		for _, provider := range *providers {
+			conn := provider.Meta().(*AWSClient).ec2conn
+			resp, err := conn.DescribeInstances(&ec2.DescribeInstancesInput{
+				InstanceIDs: []*string{aws.String(rs.Primary.ID)},
+			})
+			if ec2err, ok := err.(aws.APIError); ok && ec2err.Code == "InvalidInstanceID.NotFound" {
+				continue
+			}
+			if err != nil {
+				return err
+			}
 
-		conn := testAccProvider.Meta().(*AWSClient).ec2conn
-		resp, err := conn.DescribeInstances(&ec2.DescribeInstancesRequest{
-			InstanceIDs: []string{rs.Primary.ID},
-		})
-		if err != nil {
-			return err
+			if len(resp.Reservations) > 0 {
+				*i = *resp.Reservations[0].Instances[0]
+				return nil
+			}
 		}
-		if len(resp.Reservations) == 0 {
-			return fmt.Errorf("Instance not found")
-		}
 
-		*i = resp.Reservations[0].Instances[0]
-
-		return nil
+		return fmt.Errorf("Instance not found")
 	}
 }
 
@@ -451,6 +534,7 @@ resource "aws_instance" "foo" {
 	# us-west-2
 	ami = "ami-4fccb37f"
 	availability_zone = "us-west-2a"
+	placement_group = "terraform-placement-group"
 
 	instance_type = "m1.small"
 	security_groups = ["${aws_security_group.tf_test_foo.name}"]
@@ -540,6 +624,32 @@ resource "aws_instance" "foo" {
 	subnet_id = "${aws_subnet.foo.id}"
 	associate_public_ip_address = true
 	tenancy = "dedicated"
+}
+`
+
+const testAccInstanceConfigMultipleRegions = `
+provider "aws" {
+	alias = "west"
+	region = "us-west-2"
+}
+
+provider "aws" {
+	alias = "east"
+	region = "us-east-1"
+}
+
+resource "aws_instance" "foo" {
+	# us-west-2
+	provider = "aws.west"
+	ami = "ami-4fccb37f"
+	instance_type = "m1.small"
+}
+
+resource "aws_instance" "bar" {
+	# us-east-1
+	provider = "aws.east"
+	ami = "ami-8c6ea9e4"
+	instance_type = "m1.small"
 }
 `
 
@@ -636,6 +746,51 @@ resource "aws_instance" "foo_instance" {
   security_groups = ["${aws_security_group.tf_test_foo.id}"]
   subnet_id = "${aws_subnet.foo.id}"
   associate_public_ip_address = true
+	depends_on = ["aws_internet_gateway.gw"]
+}
+
+resource "aws_eip" "foo_eip" {
+  instance = "${aws_instance.foo_instance.id}"
+  vpc = true
+	depends_on = ["aws_internet_gateway.gw"]
+}
+`
+
+const testAccInstanceNetworkInstanceVPCSecurityGroupIDs = `
+resource "aws_internet_gateway" "gw" {
+  vpc_id = "${aws_vpc.foo.id}"
+}
+
+resource "aws_vpc" "foo" {
+  cidr_block = "10.1.0.0/16"
+	tags {
+		Name = "tf-network-test"
+	}
+}
+
+resource "aws_security_group" "tf_test_foo" {
+  name = "tf_test_foo"
+  description = "foo"
+  vpc_id="${aws_vpc.foo.id}"
+
+  ingress {
+    protocol = "icmp"
+    from_port = -1
+    to_port = -1
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_subnet" "foo" {
+  cidr_block = "10.1.1.0/24"
+  vpc_id = "${aws_vpc.foo.id}"
+}
+
+resource "aws_instance" "foo_instance" {
+  ami = "ami-21f78e11"
+  instance_type = "t1.micro"
+  vpc_security_group_ids = ["${aws_security_group.tf_test_foo.id}"]
+  subnet_id = "${aws_subnet.foo.id}"
 	depends_on = ["aws_internet_gateway.gw"]
 }
 

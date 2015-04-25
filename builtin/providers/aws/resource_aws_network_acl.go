@@ -109,7 +109,7 @@ func resourceAwsNetworkAcl() *schema.Resource {
 
 func resourceAwsNetworkAclCreate(d *schema.ResourceData, meta interface{}) error {
 
-	conn := meta.(*AWSClient).ec2SDKconn
+	conn := meta.(*AWSClient).ec2conn
 
 	// Create the Network Acl
 	createOpts := &ec2.CreateNetworkACLInput{
@@ -132,7 +132,7 @@ func resourceAwsNetworkAclCreate(d *schema.ResourceData, meta interface{}) error
 }
 
 func resourceAwsNetworkAclRead(d *schema.ResourceData, meta interface{}) error {
-	conn := meta.(*AWSClient).ec2SDKconn
+	conn := meta.(*AWSClient).ec2conn
 
 	resp, err := conn.DescribeNetworkACLs(&ec2.DescribeNetworkACLsInput{
 		NetworkACLIDs: []*string{aws.String(d.Id())},
@@ -167,7 +167,7 @@ func resourceAwsNetworkAclRead(d *schema.ResourceData, meta interface{}) error {
 }
 
 func resourceAwsNetworkAclUpdate(d *schema.ResourceData, meta interface{}) error {
-	conn := meta.(*AWSClient).ec2SDKconn
+	conn := meta.(*AWSClient).ec2conn
 	d.Partial(true)
 
 	if d.HasChange("ingress") {
@@ -185,7 +185,6 @@ func resourceAwsNetworkAclUpdate(d *schema.ResourceData, meta interface{}) error
 	}
 
 	if d.HasChange("subnet_id") {
-
 		//associate new subnet with the acl.
 		_, n := d.GetChange("subnet_id")
 		newSubnet := n.(string)
@@ -265,7 +264,7 @@ func updateNetworkAclEntries(d *schema.ResourceData, entryType string, conn *ec2
 }
 
 func resourceAwsNetworkAclDelete(d *schema.ResourceData, meta interface{}) error {
-	conn := meta.(*AWSClient).ec2SDKconn
+	conn := meta.(*AWSClient).ec2conn
 
 	log.Printf("[INFO] Deleting Network Acl: %s", d.Id())
 	return resource.Retry(5*time.Minute, func() error {
@@ -343,7 +342,6 @@ func getDefaultNetworkAcl(vpc_id string, conn *ec2.EC2) (defaultAcl *ec2.Network
 
 func findNetworkAclAssociation(subnetId string, conn *ec2.EC2) (networkAclAssociation *ec2.NetworkACLAssociation, err error) {
 	resp, err := conn.DescribeNetworkACLs(&ec2.DescribeNetworkACLsInput{
-		NetworkACLIDs: []*string{},
 		Filters: []*ec2.Filter{
 			&ec2.Filter{
 				Name:   aws.String("association.subnet-id"),
@@ -355,9 +353,11 @@ func findNetworkAclAssociation(subnetId string, conn *ec2.EC2) (networkAclAssoci
 	if err != nil {
 		return nil, err
 	}
-	for _, association := range resp.NetworkACLs[0].Associations {
-		if *association.SubnetID == subnetId {
-			return association, nil
+	if resp.NetworkACLs != nil && len(resp.NetworkACLs) > 0 {
+		for _, association := range resp.NetworkACLs[0].Associations {
+			if *association.SubnetID == subnetId {
+				return association, nil
+			}
 		}
 	}
 	return nil, fmt.Errorf("could not find association for subnet %s ", subnetId)

@@ -24,13 +24,15 @@ func resourceAwsSecurityGroup() *schema.Resource {
 		Schema: map[string]*schema.Schema{
 			"name": &schema.Schema{
 				Type:     schema.TypeString,
-				Required: true,
+				Optional: true,
+				Computed: true,
 				ForceNew: true,
 			},
 
 			"description": &schema.Schema{
 				Type:     schema.TypeString,
-				Required: true,
+				Optional: true,
+				Default:  "Managed by Terraform",
 			},
 
 			"vpc_id": &schema.Schema{
@@ -142,11 +144,9 @@ func resourceAwsSecurityGroup() *schema.Resource {
 }
 
 func resourceAwsSecurityGroupCreate(d *schema.ResourceData, meta interface{}) error {
-	conn := meta.(*AWSClient).ec2SDKconn
+	conn := meta.(*AWSClient).ec2conn
 
-	securityGroupOpts := &ec2.CreateSecurityGroupInput{
-		GroupName: aws.String(d.Get("name").(string)),
-	}
+	securityGroupOpts := &ec2.CreateSecurityGroupInput{}
 
 	if v := d.Get("vpc_id"); v != nil {
 		securityGroupOpts.VPCID = aws.String(v.(string))
@@ -155,6 +155,14 @@ func resourceAwsSecurityGroupCreate(d *schema.ResourceData, meta interface{}) er
 	if v := d.Get("description"); v != nil {
 		securityGroupOpts.Description = aws.String(v.(string))
 	}
+
+	var groupName string
+	if v, ok := d.GetOk("name"); ok {
+		groupName = v.(string)
+	} else {
+		groupName = resource.UniqueId()
+	}
+	securityGroupOpts.GroupName = aws.String(groupName)
 
 	log.Printf(
 		"[DEBUG] Security Group create configuration: %#v", securityGroupOpts)
@@ -187,7 +195,7 @@ func resourceAwsSecurityGroupCreate(d *schema.ResourceData, meta interface{}) er
 }
 
 func resourceAwsSecurityGroupRead(d *schema.ResourceData, meta interface{}) error {
-	conn := meta.(*AWSClient).ec2SDKconn
+	conn := meta.(*AWSClient).ec2conn
 
 	sgRaw, _, err := SGStateRefreshFunc(conn, d.Id())()
 	if err != nil {
@@ -214,7 +222,7 @@ func resourceAwsSecurityGroupRead(d *schema.ResourceData, meta interface{}) erro
 }
 
 func resourceAwsSecurityGroupUpdate(d *schema.ResourceData, meta interface{}) error {
-	conn := meta.(*AWSClient).ec2SDKconn
+	conn := meta.(*AWSClient).ec2conn
 
 	sgRaw, _, err := SGStateRefreshFunc(conn, d.Id())()
 	if err != nil {
@@ -249,7 +257,7 @@ func resourceAwsSecurityGroupUpdate(d *schema.ResourceData, meta interface{}) er
 }
 
 func resourceAwsSecurityGroupDelete(d *schema.ResourceData, meta interface{}) error {
-	conn := meta.(*AWSClient).ec2SDKconn
+	conn := meta.(*AWSClient).ec2conn
 
 	log.Printf("[DEBUG] Security Group destroy: %v", d.Id())
 
@@ -320,12 +328,12 @@ func resourceAwsSecurityGroupRuleHash(v interface{}) int {
 func resourceAwsSecurityGroupIPPermGather(d *schema.ResourceData, permissions []*ec2.IPPermission) []map[string]interface{} {
 	ruleMap := make(map[string]map[string]interface{})
 	for _, perm := range permissions {
-		var fromPort, toPort *int64
+		var fromPort, toPort int64
 		if v := perm.FromPort; v != nil {
-			fromPort = v
+			fromPort = *v
 		}
 		if v := perm.ToPort; v != nil {
-			toPort = v
+			toPort = *v
 		}
 
 		k := fmt.Sprintf("%s-%d-%d", *perm.IPProtocol, fromPort, toPort)
@@ -355,7 +363,7 @@ func resourceAwsSecurityGroupIPPermGather(d *schema.ResourceData, permissions []
 
 		var groups []string
 		if len(perm.UserIDGroupPairs) > 0 {
-			groups = flattenSecurityGroupsSDK(perm.UserIDGroupPairs)
+			groups = flattenSecurityGroups(perm.UserIDGroupPairs)
 		}
 		for i, id := range groups {
 			if id == d.Id() {
@@ -398,8 +406,8 @@ func resourceAwsSecurityGroupUpdateRules(
 		os := o.(*schema.Set)
 		ns := n.(*schema.Set)
 
-		remove := expandIPPermsSDK(group, os.Difference(ns).List())
-		add := expandIPPermsSDK(group, ns.Difference(os).List())
+		remove := expandIPPerms(group, os.Difference(ns).List())
+		add := expandIPPerms(group, ns.Difference(os).List())
 
 		// TODO: We need to handle partial state better in the in-between
 		// in this update.
@@ -411,7 +419,7 @@ func resourceAwsSecurityGroupUpdateRules(
 		// not have service issues.
 
 		if len(remove) > 0 || len(add) > 0 {
-			conn := meta.(*AWSClient).ec2SDKconn
+			conn := meta.(*AWSClient).ec2conn
 
 			var err error
 			if len(remove) > 0 {

@@ -18,6 +18,9 @@ func resourceComputeInstance() *schema.Resource {
 		Update: resourceComputeInstanceUpdate,
 		Delete: resourceComputeInstanceDelete,
 
+		SchemaVersion: 1,
+		MigrateState:  resourceComputeInstanceMigrateState,
+
 		Schema: map[string]*schema.Schema{
 			"name": &schema.Schema{
 				Type:     schema.TypeString,
@@ -81,6 +84,11 @@ func resourceComputeInstance() *schema.Resource {
 							Optional: true,
 							ForceNew: true,
 						},
+
+						"device_name": &schema.Schema{
+							Type: schema.TypeString,
+							Optional: true,
+						},
 					},
 				},
 			},
@@ -128,6 +136,7 @@ func resourceComputeInstance() *schema.Resource {
 				Type:     schema.TypeList,
 				Optional: true,
 				ForceNew: true,
+				Deprecated: "Please use network_interface",
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"source": &schema.Schema{
@@ -168,11 +177,9 @@ func resourceComputeInstance() *schema.Resource {
 			},
 
 			"metadata": &schema.Schema{
-				Type:     schema.TypeList,
+				Type:     schema.TypeMap,
 				Optional: true,
-				Elem: &schema.Schema{
-					Type: schema.TypeMap,
-				},
+				Elem:     schema.TypeString,
 			},
 
 			"service_account": &schema.Schema{
@@ -337,6 +344,10 @@ func resourceComputeInstanceCreate(d *schema.ResourceData, meta interface{}) err
 		if v, ok := d.GetOk(prefix + ".size"); ok {
 			diskSizeGb := v.(int)
 			disk.InitializeParams.DiskSizeGb = int64(diskSizeGb)
+		}
+
+		if v, ok := d.GetOk(prefix  + ".device_name"); ok {
+			disk.DeviceName = v.(string)
 		}
 
 		disks = append(disks, &disk)
@@ -735,6 +746,7 @@ func resourceComputeInstanceDelete(d *schema.ResourceData, meta interface{}) err
 	config := meta.(*Config)
 
 	zone := d.Get("zone").(string)
+	log.Printf("[INFO] Requesting instance deletion: %s", d.Id())
 	op, err := config.clientCompute.Instances.Delete(config.Project, zone, d.Id()).Do()
 	if err != nil {
 		return fmt.Errorf("Error deleting instance: %s", err)
@@ -751,32 +763,22 @@ func resourceComputeInstanceDelete(d *schema.ResourceData, meta interface{}) err
 }
 
 func resourceInstanceMetadata(d *schema.ResourceData) *compute.Metadata {
-	var metadata *compute.Metadata
-	if metadataList := d.Get("metadata").([]interface{}); len(metadataList) > 0 {
-		m := new(compute.Metadata)
-		m.Items = make([]*compute.MetadataItems, 0, len(metadataList))
-		for _, metadataMap := range metadataList {
-			for key, val := range metadataMap.(map[string]interface{}) {
-				// TODO: fix https://github.com/hashicorp/terraform/issues/883
-				//       and remove this workaround <3 phinze
-				if key == "#" {
-					continue
-				}
-				m.Items = append(m.Items, &compute.MetadataItems{
-					Key:   key,
-					Value: val.(string),
-				})
-			}
+	m := &compute.Metadata{}
+	if mdMap := d.Get("metadata").(map[string]interface{}); len(mdMap) > 0 {
+		m.Items = make([]*compute.MetadataItems, 0, len(mdMap))
+		for key, val := range mdMap {
+			m.Items = append(m.Items, &compute.MetadataItems{
+				Key:   key,
+				Value: val.(string),
+			})
 		}
 
 		// Set the fingerprint. If the metadata has never been set before
 		// then this will just be blank.
 		m.Fingerprint = d.Get("metadata_fingerprint").(string)
-
-		metadata = m
 	}
 
-	return metadata
+	return m
 }
 
 func resourceInstanceTags(d *schema.ResourceData) *compute.Tags {

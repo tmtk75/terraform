@@ -31,13 +31,14 @@ The following arguments are supported:
 
 * `ami` - (Required) The AMI to use for the instance.
 * `availability_zone` - (Optional) The AZ to start the instance in.
+* `placement_group` - (Optional) The Placement Group to start the instance in.
 * `ebs_optimized` - (Optional) If true, the launched EC2 instance will be
      EBS-optimized.
 * `instance_type` - (Required) The type of instance to start
 * `key_name` - (Optional) The key name to use for the instance.
-* `security_groups` - (Optional) A list of security group IDs or names to associate with.
-   If you are within a non-default VPC, you'll need to use the security group ID. Otherwise,
-   for EC2 and the default VPC, use the security group name.
+* `security_groups` - (Optional) A list of security group names to associate with.
+   If you are within a non-default VPC, you'll need to use `vpc_security_group_ids` instead.
+* `vpc_security_group_ids` - (Optional) A list of security group IDs to associate with.
 * `subnet_id` - (Optional) The VPC Subnet ID to launch in.
 * `associate_public_ip_address` - (Optional) Associate a public ip address with an instance in a VPC.
 * `private_ip` - (Optional) Private IP address to associate with the
@@ -120,10 +121,12 @@ The following attributes are exported:
 
 * `id` - The instance ID.
 * `availability_zone` - The availability zone of the instance.
+* `placement_group` - The placement group of the instance.
 * `key_name` - The key name of the instance
 * `private_dns` - The Private DNS name of the instance
 * `private_ip` - The private IP address.
 * `public_dns` - The public DNS name of the instance
 * `public_ip` - The public IP address.
 * `security_groups` - The associated security groups.
+* `vpc_security_group_ids` - The associated security groups in non-default VPC
 * `subnet_id` - The VPC subnet ID.

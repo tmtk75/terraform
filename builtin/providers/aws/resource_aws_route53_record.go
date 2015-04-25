@@ -10,8 +10,8 @@ import (
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/helper/schema"
 
-	"github.com/hashicorp/aws-sdk-go/aws"
-	"github.com/hashicorp/aws-sdk-go/gen/route53"
+	"github.com/awslabs/aws-sdk-go/aws"
+	"github.com/awslabs/aws-sdk-go/service/route53"
 )
 
 func resourceAwsRoute53Record() *schema.Resource {
@@ -45,6 +45,17 @@ func resourceAwsRoute53Record() *schema.Resource {
 				Required: true,
 			},
 
+			"weight": &schema.Schema{
+				Type:     schema.TypeInt,
+				Optional: true,
+			},
+
+			"set_identifier": &schema.Schema{
+				Type:     schema.TypeString,
+				Optional: true,
+				ForceNew: true,
+			},
+
 			"records": &schema.Schema{
 				Type:     schema.TypeSet,
 				Elem:     &schema.Schema{Type: schema.TypeString},
@@ -74,7 +85,7 @@ func resourceAwsRoute53RecordCreate(d *schema.ResourceData, meta interface{}) er
 	conn := meta.(*AWSClient).r53conn
 	zone := cleanZoneID(d.Get("zone_id").(string))
 
-	zoneRecord, err := conn.GetHostedZone(&route53.GetHostedZoneRequest{ID: aws.String(zone)})
+	zoneRecord, err := conn.GetHostedZone(&route53.GetHostedZoneInput{ID: aws.String(zone)})
 	if err != nil {
 		return err
 	}
@@ -90,15 +101,15 @@ func resourceAwsRoute53RecordCreate(d *schema.ResourceData, meta interface{}) er
 	// operation happening at the same time.
 	changeBatch := &route53.ChangeBatch{
 		Comment: aws.String("Managed by Terraform"),
-		Changes: []route53.Change{
-			route53.Change{
+		Changes: []*route53.Change{
+			&route53.Change{
 				Action:            aws.String("UPSERT"),
 				ResourceRecordSet: rec,
 			},
 		},
 	}
 
-	req := &route53.ChangeResourceRecordSetsRequest{
+	req := &route53.ChangeResourceRecordSetsInput{
 		HostedZoneID: aws.String(cleanZoneID(*zoneRecord.HostedZone.ID)),
 		ChangeBatch:  changeBatch,
 	}
@@ -133,10 +144,18 @@ func resourceAwsRoute53RecordCreate(d *schema.ResourceData, meta interface{}) er
 	if err != nil {
 		return err
 	}
-	changeInfo := respRaw.(*route53.ChangeResourceRecordSetsResponse).ChangeInfo
+	changeInfo := respRaw.(*route53.ChangeResourceRecordSetsOutput).ChangeInfo
 
 	// Generate an ID
-	d.SetId(fmt.Sprintf("%s_%s_%s", zone, d.Get("name").(string), d.Get("type").(string)))
+	vars := []string{
+		zone,
+		d.Get("name").(string),
+		d.Get("type").(string),
+	}
+	if v, ok := d.GetOk("set_identifier"); ok {
+		vars = append(vars, v.(string))
+	}
+	d.SetId(strings.Join(vars, "_"))
 
 	// Wait until we are done
 	wait = resource.StateChangeConf{
@@ -146,7 +165,7 @@ func resourceAwsRoute53RecordCreate(d *schema.ResourceData, meta interface{}) er
 		Timeout:    30 * time.Minute,
 		MinTimeout: 5 * time.Second,
 		Refresh: func() (result interface{}, state string, err error) {
-			changeRequest := &route53.GetChangeRequest{
+			changeRequest := &route53.GetChangeInput{
 				ID: aws.String(cleanChangeID(*changeInfo.ID)),
 			}
 			return resourceAwsGoRoute53Wait(conn, changeRequest)
@@ -166,16 +185,20 @@ func resourceAwsRoute53RecordRead(d *schema.ResourceData, meta interface{}) erro
 	zone := cleanZoneID(d.Get("zone_id").(string))
 
 	// get expanded name
-	zoneRecord, err := conn.GetHostedZone(&route53.GetHostedZoneRequest{ID: aws.String(zone)})
+	zoneRecord, err := conn.GetHostedZone(&route53.GetHostedZoneInput{ID: aws.String(zone)})
 	if err != nil {
 		return err
 	}
 	en := expandRecordName(d.Get("name").(string), *zoneRecord.HostedZone.Name)
 
-	lopts := &route53.ListResourceRecordSetsRequest{
+	lopts := &route53.ListResourceRecordSetsInput{
 		HostedZoneID:    aws.String(cleanZoneID(zone)),
 		StartRecordName: aws.String(en),
 		StartRecordType: aws.String(d.Get("type").(string)),
+	}
+
+	if v, ok := d.GetOk("set_identifier"); ok {
+		lopts.StartRecordIdentifier = aws.String(v.(string))
 	}
 
 	resp, err := conn.ListResourceRecordSets(lopts)
@@ -194,6 +217,10 @@ func resourceAwsRoute53RecordRead(d *schema.ResourceData, meta interface{}) erro
 			continue
 		}
 
+		if lopts.StartRecordIdentifier != nil && *record.SetIdentifier != *lopts.StartRecordIdentifier {
+			continue
+		}
+
 		found = true
 
 		err := d.Set("records", flattenResourceRecords(record.ResourceRecords))
@@ -201,6 +228,8 @@ func resourceAwsRoute53RecordRead(d *schema.ResourceData, meta interface{}) erro
 			return fmt.Errorf("[DEBUG] Error setting records for: %s, error: %#v", en, err)
 		}
 		d.Set("ttl", record.TTL)
+		d.Set("weight", record.Weight)
+		d.Set("set_identifier", record.SetIdentifier)
 
 		break
 	}
@@ -218,7 +247,7 @@ func resourceAwsRoute53RecordDelete(d *schema.ResourceData, meta interface{}) er
 	zone := cleanZoneID(d.Get("zone_id").(string))
 	log.Printf("[DEBUG] Deleting resource records for zone: %s, name: %s",
 		zone, d.Get("name").(string))
-	zoneRecord, err := conn.GetHostedZone(&route53.GetHostedZoneRequest{ID: aws.String(zone)})
+	zoneRecord, err := conn.GetHostedZone(&route53.GetHostedZoneInput{ID: aws.String(zone)})
 	if err != nil {
 		return err
 	}
@@ -231,15 +260,15 @@ func resourceAwsRoute53RecordDelete(d *schema.ResourceData, meta interface{}) er
 	// Create the new records
 	changeBatch := &route53.ChangeBatch{
 		Comment: aws.String("Deleted by Terraform"),
-		Changes: []route53.Change{
-			route53.Change{
+		Changes: []*route53.Change{
+			&route53.Change{
 				Action:            aws.String("DELETE"),
 				ResourceRecordSet: rec,
 			},
 		},
 	}
 
-	req := &route53.ChangeResourceRecordSetsRequest{
+	req := &route53.ChangeResourceRecordSetsInput{
 		HostedZoneID: aws.String(cleanZoneID(zone)),
 		ChangeBatch:  changeBatch,
 	}
@@ -297,6 +326,15 @@ func resourceAwsRoute53RecordBuildSet(d *schema.ResourceData, zoneName string) (
 		TTL:             aws.Long(int64(d.Get("ttl").(int))),
 		ResourceRecords: records,
 	}
+
+	if v, ok := d.GetOk("weight"); ok {
+		rec.Weight = aws.Long(int64(v.(int)))
+	}
+
+	if v, ok := d.GetOk("set_identifier"); ok {
+		rec.SetIdentifier = aws.String(v.(string))
+	}
+
 	return rec, nil
 }
 

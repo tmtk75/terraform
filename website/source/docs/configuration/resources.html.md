@@ -64,6 +64,10 @@ The `lifecycle` block allows the following keys to be set:
       instance is destroyed. As an example, this can be used to
       create an new DNS record before removing an old record.
 
+  * `prevent_destroy` (bool) - This flag provides extra protection against the
+      destruction of a given resource. When this is set to `true`, any plan
+      that includes a destroy of this resource will return an error message.
+
 -------------
 
 Within a resource, you can optionally have a **connection block**.
@@ -118,10 +122,36 @@ variable "instance_ips" {
 
 resource "aws_instance" "app" {
   count = "3"
-  private_ip = "${lookup(instance_ips, count.index)}"
+  private_ip = "${lookup(var.instance_ips, count.index)}"
   # ...
 }
 ```
+
+## Multiple Provider Instances
+
+By default, a resource targets the resource based on its type. For example
+an `aws_instance` resource will target the "aws" provider. As of Terraform
+0.5.0, a resource can target any provider by name.
+
+The primary use case for this is to target a specific configuration of
+a provider that is configured multiple times to support multiple regions, etc.
+
+To target another provider, set the `provider` field:
+
+```
+resource "aws_instance" "foo" {
+	provider = "aws.west"
+
+	# ...
+}
+```
+
+The value of the field should be `TYPE` or `TYPE.ALIAS`. The `ALIAS` value
+comes from the `alias` field value when configuring the
+[provider](/docs/configuration/providers.html).
+
+If no `provider` field is specified, the default (provider with no alias)
+provider is used.
 
 ## Syntax
 
@@ -131,7 +161,9 @@ The full syntax is:
 resource TYPE NAME {
 	CONFIG ...
 	[count = COUNT]
-    [depends_on = [RESOURCE NAME, ...]]
+	[depends_on = [RESOURCE NAME, ...]]
+	[provider = PROVIDER]
+
     [LIFECYCLE]
 
 	[CONNECTION]
