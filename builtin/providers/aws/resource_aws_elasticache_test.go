@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hashicorp/aws-sdk-go/aws"
-	"github.com/hashicorp/aws-sdk-go/gen/elasticache"
+	"github.com/awslabs/aws-sdk-go/aws"
+	"github.com/awslabs/aws-sdk-go/service/elasticache"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
 )
@@ -43,7 +43,7 @@ func testAccCheckAWSElasticacheDestroy(s *terraform.State) error {
 		if rs.Type != "aws_elasticache" {
 			continue
 		}
-		res, err := conn.DescribeCacheClusters(&elasticcache.DescribeCacheClustersMessage{
+		res, err := conn.DescribeCacheClusters(&elasticache.DescribeCacheClustersInput{
 			CacheClusterID: aws.String(rs.Primary.ID),
 		})
 		if err != nil {
@@ -68,7 +68,7 @@ func testAccCheckAWSElasticacheExists(n string) resource.TestCheckFunc {
 		}
 
 		conn := testAccProvider.Meta().(*AWSClient).elasticacheconn
-		_, err := conn.DescribeCacheClusters(&elasticcache.DescribeCacheClustersMessage{
+		_, err := conn.DescribeCacheClusters(&elasticache.DescribeCacheClustersInput{
 			CacheClusterID: aws.String(rs.Primary.ID),
 		})
 		if err != nil {

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/hashicorp/aws-sdk-go/aws"
-	"github.com/hashicorp/aws-sdk-go/gen/elasticache"
+	"github.com/awslabs/aws-sdk-go/aws"
+	"github.com/awslabs/aws-sdk-go/service/elasticache"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
 )
@@ -33,7 +33,7 @@ func testAccCheckAWSEcacheSubnetGroupDestroy(s *terraform.State) error {
 		if rs.Type != "aws_elasticache_subnet_group" {
 			continue
 		}
-		res, err := conn.DescribeCacheSubnetGroups(&elasticcache.DescribeCacheSubnetGroupsMessage{
+		res, err := conn.DescribeCacheSubnetGroups(&elasticache.DescribeCacheSubnetGroupsInput{
 			CacheSubnetGroupName: aws.String(rs.Primary.ID),
 		})
 		if err != nil {
@@ -58,7 +58,7 @@ func testAccCheckAWSEcacheSubnetGroupExists(n string) resource.TestCheckFunc {
 		}
 
 		conn := testAccProvider.Meta().(*AWSClient).elasticacheconn
-		_, err := conn.DescribeCacheSubnetGroups(&elasticcache.DescribeCacheSubnetGroupsMessage{
+		_, err := conn.DescribeCacheSubnetGroups(&elasticache.DescribeCacheSubnetGroupsInput{
 			CacheSubnetGroupName: aws.String(rs.Primary.ID),
 		})
 		if err != nil {

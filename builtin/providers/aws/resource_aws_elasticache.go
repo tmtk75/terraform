@@ -5,8 +5,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/hashicorp/aws-sdk-go/aws"
-	"github.com/hashicorp/aws-sdk-go/gen/elasticache"
+	"github.com/awslabs/aws-sdk-go/aws"
+	"github.com/awslabs/aws-sdk-go/service/elasticache"
 	"github.com/hashicorp/terraform/helper/hashcode"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/helper/schema"
@@ -89,31 +89,25 @@ func resourceAwsElasticacheCreate(d *schema.ResourceData, meta interface{}) erro
 
 	clusterId := d.Get("cluster_id").(string)
 	nodeType := d.Get("node_type").(string)           // e.g) cache.m1.small
-	numNodes := d.Get("num_cache_nodes").(int)        // 2
+	numNodes := int64(d.Get("num_cache_nodes").(int)) // 2
 	engine := d.Get("engine").(string)                // memcached
 	engineVersion := d.Get("engine_version").(string) // 1.4.14
-	port := d.Get("port").(int)                       // 11211
+	port := int64(d.Get("port").(int))                // 11211
 	subnetGroupName := d.Get("subnet_group_name").(string)
 	securityNameSet := d.Get("security_group_names").(*schema.Set)
 	securityIdSet := d.Get("security_group_ids").(*schema.Set)
 	paramGroupName := d.Get("parameter_group_name").(string) // default.memcached1.4
 
-	securityNames := make([]string, securityNameSet.Len())
-	for i, name := range securityNameSet.List() {
-		securityNames[i] = name.(string)
-	}
-	securityIds := make([]string, securityIdSet.Len())
-	for i, id := range securityIdSet.List() {
-		securityIds[i] = id.(string)
-	}
+	securityNames := expandStringList(securityNameSet.List())
+	securityIds := expandStringList(securityIdSet.List())
 
-	req := &elasticcache.CreateCacheClusterMessage{
+	req := &elasticache.CreateCacheClusterInput{
 		CacheClusterID:          aws.String(clusterId),
 		CacheNodeType:           aws.String(nodeType),
-		NumCacheNodes:           aws.Integer(numNodes),
+		NumCacheNodes:           aws.Long(numNodes),
 		Engine:                  aws.String(engine),
 		EngineVersion:           aws.String(engineVersion),
-		Port:                    aws.Integer(port),
+		Port:                    aws.Long(port),
 		CacheSubnetGroupName:    aws.String(subnetGroupName),
 		CacheSecurityGroupNames: securityNames,
 		SecurityGroupIDs:        securityIds,
@@ -153,7 +147,7 @@ func resourceAwsElasticacheCreate(d *schema.ResourceData, meta interface{}) erro
 
 func resourceAwsElasticacheRead(d *schema.ResourceData, meta interface{}) error {
 	elasticacheconn := meta.(*AWSClient).elasticacheconn
-	req := &elasticcache.DescribeCacheClustersMessage{
+	req := &elasticache.DescribeCacheClustersInput{
 		CacheClusterID: aws.String(d.Id()),
 	}
 
@@ -184,7 +178,7 @@ func resourceAwsElasticacheRead(d *schema.ResourceData, meta interface{}) error 
 func resourceAwsElasticacheDelete(d *schema.ResourceData, meta interface{}) error {
 	elasticacheconn := meta.(*AWSClient).elasticacheconn
 
-	req := &elasticcache.DeleteCacheClusterMessage{
+	req := &elasticache.DeleteCacheClusterInput{
 		CacheClusterID: aws.String(d.Id()),
 	}
 	_, err := elasticacheconn.DeleteCacheCluster(req)
@@ -212,9 +206,9 @@ func resourceAwsElasticacheDelete(d *schema.ResourceData, meta interface{}) erro
 	return nil
 }
 
-func CacheClusterStateRefreshFunc(conn *elasticcache.ElasticCache, clusterID, givenState string, pending []string) resource.StateRefreshFunc {
+func CacheClusterStateRefreshFunc(conn *elasticache.ElastiCache, clusterID, givenState string, pending []string) resource.StateRefreshFunc {
 	return func() (interface{}, string, error) {
-		resp, err := conn.DescribeCacheClusters(&elasticcache.DescribeCacheClustersMessage{
+		resp, err := conn.DescribeCacheClusters(&elasticache.DescribeCacheClustersInput{
 			CacheClusterID: aws.String(clusterID),
 		})
 		if err != nil {

@@ -5,8 +5,8 @@ import (
 	"log"
 	"time"
 
+	"github.com/awslabs/aws-sdk-go/service/elasticache"
 	"github.com/hashicorp/aws-sdk-go/aws"
-	"github.com/hashicorp/aws-sdk-go/gen/elasticache"
 	"github.com/hashicorp/terraform/helper/hashcode"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/helper/schema"
@@ -53,12 +53,9 @@ func resourceAwsElasticacheSubnetGroupCreate(d *schema.ResourceData, meta interf
 
 	log.Printf("[DEBUG] Cache subnet group create: name: %s, description: %s", name, desc)
 
-	subnetIds := make([]string, subnetIdsSet.Len())
-	for i, subnetId := range subnetIdsSet.List() {
-		subnetIds[i] = subnetId.(string)
-	}
+	subnetIds := expandStringList(subnetIdsSet.List())
 
-	req := &elasticcache.CreateCacheSubnetGroupMessage{
+	req := &elasticache.CreateCacheSubnetGroupInput{
 		CacheSubnetGroupDescription: aws.String(desc),
 		CacheSubnetGroupName:        aws.String(name),
 		SubnetIDs:                   subnetIds,
@@ -77,7 +74,7 @@ func resourceAwsElasticacheSubnetGroupCreate(d *schema.ResourceData, meta interf
 
 func resourceAwsElasticacheSubnetGroupRead(d *schema.ResourceData, meta interface{}) error {
 	elasticacheconn := meta.(*AWSClient).elasticacheconn
-	req := &elasticcache.DescribeCacheSubnetGroupsMessage{
+	req := &elasticache.DescribeCacheSubnetGroupsInput{
 		CacheSubnetGroupName: aws.String(d.Get("name").(string)),
 	}
 
@@ -89,11 +86,11 @@ func resourceAwsElasticacheSubnetGroupRead(d *schema.ResourceData, meta interfac
 		return fmt.Errorf("Error missing %v", d.Get("name"))
 	}
 
-	var group *elasticcache.CacheSubnetGroup
+	var group *elasticache.CacheSubnetGroup
 	for _, g := range res.CacheSubnetGroups {
 		log.Printf("[DEBUG] %v %v", g.CacheSubnetGroupName, d.Id())
 		if *g.CacheSubnetGroupName == d.Id() {
-			group = &g
+			group = g
 		}
 	}
 	if group == nil {
@@ -118,7 +115,7 @@ func resourceAwsElasticacheSubnetGroupDelete(d *schema.ResourceData, meta interf
 	log.Printf("[DEBUG] Cache subnet group delete: %s", d.Id())
 
 	return resource.Retry(5*time.Minute, func() error {
-		err := elasticacheconn.DeleteCacheSubnetGroup(&elasticcache.DeleteCacheSubnetGroupMessage{
+		_, err := elasticacheconn.DeleteCacheSubnetGroup(&elasticache.DeleteCacheSubnetGroupInput{
 			CacheSubnetGroupName: aws.String(d.Id()),
 		})
 		if err != nil {

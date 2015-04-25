@@ -5,8 +5,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/hashicorp/aws-sdk-go/aws"
-	"github.com/hashicorp/aws-sdk-go/gen/elasticache"
+	"github.com/awslabs/aws-sdk-go/aws"
+	"github.com/awslabs/aws-sdk-go/service/elasticache"
 	"github.com/hashicorp/terraform/helper/hashcode"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/helper/schema"
@@ -55,7 +55,7 @@ func resourceAwsElasticacheSecurityGroupCreate(d *schema.ResourceData, meta inte
 	}
 
 	log.Printf("[DEBUG] Cache security group create: name: %s, description: %s, security_group_names: %v", name, desc, names)
-	res, err := elasticacheconn.CreateCacheSecurityGroup(&elasticcache.CreateCacheSecurityGroupMessage{
+	res, err := elasticacheconn.CreateCacheSecurityGroup(&elasticache.CreateCacheSecurityGroupInput{
 		Description:            aws.String(desc),
 		CacheSecurityGroupName: aws.String(name),
 	})
@@ -65,14 +65,14 @@ func resourceAwsElasticacheSecurityGroupCreate(d *schema.ResourceData, meta inte
 
 	for _, n := range names {
 		log.Printf("[DEBUG] Authorize cache security group ingress name: %v, ec2 security group name: %v", name, n)
-		_, err = elasticacheconn.AuthorizeCacheSecurityGroupIngress(&elasticcache.AuthorizeCacheSecurityGroupIngressMessage{
+		_, err = elasticacheconn.AuthorizeCacheSecurityGroupIngress(&elasticache.AuthorizeCacheSecurityGroupIngressInput{
 			CacheSecurityGroupName:  aws.String(name),
 			EC2SecurityGroupName:    aws.String(n),
 			EC2SecurityGroupOwnerID: aws.String(*res.CacheSecurityGroup.OwnerID),
 		})
 		if err != nil {
 			log.Printf("[ERROR] Failed to authorize: %v", err)
-			err := elasticacheconn.DeleteCacheSecurityGroup(&elasticcache.DeleteCacheSecurityGroupMessage{
+			_, err := elasticacheconn.DeleteCacheSecurityGroup(&elasticache.DeleteCacheSecurityGroupInput{
 				CacheSecurityGroupName: aws.String(d.Id()),
 			})
 			log.Printf("[ERROR] Revert cache security group: %v", err)
@@ -86,7 +86,7 @@ func resourceAwsElasticacheSecurityGroupCreate(d *schema.ResourceData, meta inte
 
 func resourceAwsElasticacheSecurityGroupRead(d *schema.ResourceData, meta interface{}) error {
 	elasticacheconn := meta.(*AWSClient).elasticacheconn
-	req := &elasticcache.DescribeCacheSecurityGroupsMessage{
+	req := &elasticache.DescribeCacheSecurityGroupsInput{
 		CacheSecurityGroupName: aws.String(d.Get("name").(string)),
 	}
 
@@ -98,11 +98,11 @@ func resourceAwsElasticacheSecurityGroupRead(d *schema.ResourceData, meta interf
 		return fmt.Errorf("Error missing %v", d.Get("name"))
 	}
 
-	var group *elasticcache.CacheSecurityGroup
+	var group *elasticache.CacheSecurityGroup
 	for _, g := range res.CacheSecurityGroups {
 		log.Printf("[DEBUG] CacheSecurityGroupName: %v, id: %v", g.CacheSecurityGroupName, d.Id())
 		if *g.CacheSecurityGroupName == d.Id() {
-			group = &g
+			group = g
 		}
 	}
 	if group == nil {
@@ -121,7 +121,7 @@ func resourceAwsElasticacheSecurityGroupDelete(d *schema.ResourceData, meta inte
 	log.Printf("[DEBUG] Cache security group delete: %s", d.Id())
 
 	return resource.Retry(5*time.Minute, func() error {
-		err := elasticacheconn.DeleteCacheSecurityGroup(&elasticcache.DeleteCacheSecurityGroupMessage{
+		_, err := elasticacheconn.DeleteCacheSecurityGroup(&elasticache.DeleteCacheSecurityGroupInput{
 			CacheSecurityGroupName: aws.String(d.Id()),
 		})
 		if err != nil {
