@@ -112,7 +112,7 @@ resource "aws_elasticache" "bar" {
 
 var testAccAWSElasticacheInVPCConfig = fmt.Sprintf(`
 resource "aws_vpc" "foo" {
-    cidr_block = "192.168.1.1/16"
+    cidr_block = "192.168.0.0/16"
     tags {
             Name = "tf-test"
     }
@@ -120,7 +120,7 @@ resource "aws_vpc" "foo" {
 
 resource "aws_subnet" "foo" {
     vpc_id = "${aws_vpc.foo.id}"
-    cidr_block = "192.168.1.1/20"
+    cidr_block = "192.168.0.0/20"
     availability_zone = "us-west-2a"
     tags {
             Name = "tf-test"
